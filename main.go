@@ -1,68 +1,54 @@
 package main
 
 import (
-	"database/sql"
+	"common"
 	"fmt"
-	"github.com/go-sql-driver/mysql"
-	"github.com/gorilla/mux"
-	"github.com/joho/godotenv"
+	"github.com/gin-gonic/gin"
+	"github.com/olahol/melody"
 	"log"
+	"medicines"
 	"net/http"
-	"os"
 )
 
-var db *sql.DB
-
-type Medicine struct {
-	ID          int    `json:"id"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
-}
+var Mel *melody.Melody
 
 func main() {
-	connectToDatabase()
-	r := newRouter()
-	err := http.ListenAndServe("127.0.0.1:8080", r)
+	common.ConnectToDatabase()
+	router := newRouter()
+	err := router.Run("127.0.0.1:8080")
+
 	if err != nil {
-		log.Fatal(err)
+		fmt.Println(err.Error())
+		return
 	}
 }
 
-func connectToDatabase() {
-	cfg := mysql.Config{
-		User:                 getDotEnvValue("DBUSER"),
-		Passwd:               getDotEnvValue("DBPASS"),
-		Net:                  getDotEnvValue("DBNET"),
-		Addr:                 getDotEnvValue("DBADDRESS"),
-		DBName:               getDotEnvValue("DBNAME"),
-		AllowNativePasswords: true,
-	}
-	// Get a database handle.
-	var err error
-	db, err = sql.Open("mysql", cfg.FormatDSN())
-	if err != nil {
-		log.Fatal(err)
-	}
+func newRouter() *gin.Engine {
+	r := gin.Default()
+	Mel = common.CreateWebSocket()
 
-	pingErr := db.Ping()
-	if pingErr != nil {
-		log.Fatal(pingErr)
-	}
-	fmt.Println("Connected!")
-}
+	r.GET("/medicines", medicines.GetMedicinesHandler)
+	r.GET("/medicines/:id", medicines.GetMedicineHandler)
+	r.POST("/medicines", medicines.CreateMedicineHandler)
+	r.PUT("/medicines/:id", medicines.UpdateMedicineHandler)
+	r.DELETE("/medicines/:id", medicines.DeleteMedicineHandler)
 
-func newRouter() *mux.Router {
-	r := mux.NewRouter()
-	r.HandleFunc("/medicines", getMedicinesHandler).Methods("GET")
-	r.HandleFunc("/medicines", createMedicineHandler).Methods("POST")
+	r.GET("/medicine-logs", func(c *gin.Context) {
+		http.ServeFile(c.Writer, c.Request, "assets/medicine-logs.html")
+	})
+
+	r.GET("/ws", func(c *gin.Context) {
+		err := Mel.HandleRequest(c.Writer, c.Request)
+		if err != nil {
+			log.Panic(err.Error())
+		}
+	})
+
+	Mel.HandleMessage(func(s *melody.Session, msg []byte) {
+		err := Mel.Broadcast(msg)
+		if err != nil {
+			log.Panic(err.Error())
+		}
+	})
 	return r
-}
-
-func getDotEnvValue(key string) string {
-	err := godotenv.Load()
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	return os.Getenv(key)
 }
